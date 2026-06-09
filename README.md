@@ -65,14 +65,20 @@ stays in the spec as prose and is documented, not guessed:
 - volatility: `atr_<n>` `bb_upper bb_lower bb_basis`
 - momentum: `macd_line macd_signal macd_hist` · stochastic: `stoch_k stoch_d`
 - volume-price: `vwap`
+- **structure:** `swing_high_<n>` `swing_low_<n>` (confirmed pivots, e.g. `swing_high_5`)
 
 Ops: `< > <= >= == cross_over cross_under`.
 
-> **Indicator-based channels** (EMA/RSI/MACD crossovers, VWAP, Bollinger) generate
-> a fully runnable Pine strategy. **Pure price-structure channels** (swing
-> highs/lows, supply/demand zones, candlestick-pattern entries) produce an
-> excellent written distillation but a mostly-scaffold Pine script — those
-> primitives aren't in the vocabulary *yet*. See "Roadmap".
+A condition's `machine` field is one of two forms:
+- **comparison:** `{"left": <operand>, "op": <op>, "right": <operand>}`
+- **pattern:** `{"pattern": <name>}` where name ∈ `bullish_engulfing bearish_engulfing
+  hammer shooting_star close_above_prev_high close_below_prev_low`
+
+> **Indicator- and structure-based channels** (EMA/RSI/MACD crossovers, VWAP,
+> Bollinger, swing breakouts, candle-pattern entries) generate a runnable Pine
+> strategy. Genuinely discretionary edge (tape reading, Level 2, "clean price
+> action", visual zone-drawing) is preserved as traceable `// TODO discretionary:`
+> comments — never fabricated into mechanical thresholds.
 
 ## Outputs (under `out/<channel-slug>/`)
 
@@ -99,10 +105,9 @@ python out/<slug>/backtest.py path/to/ohlcv.csv
 
 ## Roadmap
 
-- **Structure primitives** in the transpiler (`ta.pivothigh/pivotlow`, swing
-  break/retest, candlestick patterns) — would mechanize the large class of
-  price-action channels that currently degrade to comments.
-- **Parallelize the map pass** — per-video LLM calls are independent; running
-  them concurrently turns an hour-long full-channel run into minutes.
+- ~~Structure primitives (pivots, candlestick patterns)~~ — **done.**
+- ~~Parallelize the map pass~~ — **done** (`YTD_MAP_WORKERS`, default 6).
+- **More structure primitives** — supply/demand zone width, break-and-retest
+  sequences, multi-timeframe confirmation (these stay discretionary for now).
 - **Relevance filter** — skip non-strategy videos (Q&As, vlogs) before extraction.
 - Additional LLM providers (Anthropic API, Ollama).

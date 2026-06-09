@@ -10,15 +10,37 @@ from __future__ import annotations
 
 import re
 
-from .schema import VALID_OPS
+from .schema import VALID_OPS, VALID_PATTERNS
 
 _NUM = re.compile(r"^-?\d+(\.\d+)?$")
 _EMA = re.compile(r"^ema_(\d+)$")
 _SMA = re.compile(r"^sma_(\d+)$")
 _RSI = re.compile(r"^rsi_(\d+)$")
 _ATR = re.compile(r"^atr_(\d+)$")
+_SWH = re.compile(r"^swing_high_(\d+)$")
+_SWL = re.compile(r"^swing_low_(\d+)$")
 
 _PRICE = {"close", "open", "high", "low", "volume", "hl2", "ohlc4"}
+
+# Inline pattern predicates, per target language (no declaration needed).
+_PATTERN_EXPRS = {
+    "pine": {
+        "close_above_prev_high": "(close > high[1])",
+        "close_below_prev_low":  "(close < low[1])",
+        "bullish_engulfing":     "(close > open and open <= close[1] and close >= open[1] and close[1] < open[1])",
+        "bearish_engulfing":     "(close < open and open >= close[1] and close <= open[1] and close[1] > open[1])",
+        "hammer":                "((math.min(open, close) - low) > 2 * math.abs(close - open) and (high - math.max(open, close)) < math.abs(close - open))",
+        "shooting_star":         "((high - math.max(open, close)) > 2 * math.abs(close - open) and (math.min(open, close) - low) < math.abs(close - open))",
+    },
+    "py": {
+        "close_above_prev_high": "(df['Close'] > df['High'].shift())",
+        "close_below_prev_low":  "(df['Close'] < df['Low'].shift())",
+        "bullish_engulfing":     "((df['Close']>df['Open']) & (df['Open']<=df['Close'].shift()) & (df['Close']>=df['Open'].shift()) & (df['Close'].shift()<df['Open'].shift()))",
+        "bearish_engulfing":     "((df['Close']<df['Open']) & (df['Open']>=df['Close'].shift()) & (df['Close']<=df['Open'].shift()) & (df['Close'].shift()>df['Open'].shift()))",
+        "hammer":                "(((df[['Open','Close']].min(axis=1)-df['Low'])>2*(df['Close']-df['Open']).abs()) & ((df['High']-df[['Open','Close']].max(axis=1))<(df['Close']-df['Open']).abs()))",
+        "shooting_star":         "(((df['High']-df[['Open','Close']].max(axis=1))>2*(df['Close']-df['Open']).abs()) & ((df[['Open','Close']].min(axis=1)-df['Low'])<(df['Close']-df['Open']).abs()))",
+    },
+}
 
 # Reference names for the multi-output indicator "groups", per target language.
 _GROUP_REFS = {
@@ -40,6 +62,8 @@ class Transpiler:
         self.lang = lang
         self.series: dict[str, str] = {}  # var -> declaration expr (insertion-ordered)
         self.groups: set[str] = set()
+        self.swings: set = set()  # tuples ("high", n) / ("low", n)
+        self.patterns: set = set()
         self.unsupported: list[str] = []
 
     # ---- operand resolution -------------------------------------------------
@@ -79,6 +103,16 @@ class Transpiler:
         if t in ("stoch_k", "stoch_d"):
             self.groups.add("stoch")
             return self._group_ref("stoch", t)
+        m = _SWH.match(t)
+        if m:
+            n = int(m.group(1))
+            self.swings.add(("high", n))
+            return f"swingHigh{n}" if self.lang == "pine" else f"df['swing_high_{n}']"
+        m = _SWL.match(t)
+        if m:
+            n = int(m.group(1))
+            self.swings.add(("low", n))
+            return f"swingLow{n}" if self.lang == "pine" else f"df['swing_low_{n}']"
         self.unsupported.append(str(token))
         return None
 
@@ -99,12 +133,21 @@ class Transpiler:
         name = _GROUP_REFS[group][token][self.lang]
         return name if self.lang == "pine" else f"df['{name}']"
 
+    def pattern_expr(self, name) -> str | None:
+        if name not in VALID_PATTERNS:
+            self.unsupported.append(str(name))
+            return None
+        self.patterns.add(name)
+        return _PATTERN_EXPRS[self.lang][name]
+
     # ---- expression building ------------------------------------------------
     def condition_expr(self, cond: dict) -> str | None:
         """Translate one {machine:{left,op,right}} predicate, or None if unmappable."""
         machine = (cond or {}).get("machine")
         if not isinstance(machine, dict):
             return None
+        if "pattern" in machine:
+            return self.pattern_expr(machine["pattern"])
         op = machine.get("op")
         if op not in VALID_OPS:
             return None
@@ -155,6 +198,17 @@ class Transpiler:
         if "stoch" in self.groups:
             lines.append("kStoch = ta.stoch(close, high, low, 14)")
             lines.append("dStoch = ta.sma(kStoch, 3)")
+        for kind, n in self.swings:
+            if kind == "high":
+                lines.append(f"swingHigh{n}_piv = ta.pivothigh({n}, {n})")
+                lines.append(f"var float swingHigh{n} = na")
+                lines.append(f"if not na(swingHigh{n}_piv)")
+                lines.append(f"    swingHigh{n} := swingHigh{n}_piv")
+            else:
+                lines.append(f"swingLow{n}_piv = ta.pivotlow({n}, {n})")
+                lines.append(f"var float swingLow{n} = na")
+                lines.append(f"if not na(swingLow{n}_piv)")
+                lines.append(f"    swingLow{n} := swingLow{n}_piv")
         return lines
 
     def _py_decls(self) -> list[str]:
@@ -167,4 +221,9 @@ class Transpiler:
             lines.append("df['bb_basis'], df['bb_upper'], df['bb_lower'] = _bb(df['Close'])")
         if "stoch" in self.groups:
             lines.append("df['stoch_k'], df['stoch_d'] = _stoch(df)")
+        for kind, n in self.swings:
+            if kind == "high":
+                lines.append(f"df['swing_high_{n}'] = _swing_high(df, {n})")
+            else:
+                lines.append(f"df['swing_low_{n}'] = _swing_low(df, {n})")
         return lines

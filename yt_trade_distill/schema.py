@@ -13,10 +13,15 @@ Two ideas make this "specific enough to build a bot from":
 
 The `machine` predicate grammar
 -------------------------------
-    {"left": <operand>, "op": <op>, "right": <operand>}
+A condition's `machine` field takes ONE of two forms:
+
+  1. Comparison: {"left": <operand>, "op": <op>, "right": <operand>}
+  2. Pattern:    {"pattern": <pattern_name>}
 
   <op>      one of:  "<"  ">"  "<="  ">="  "=="  "cross_over"  "cross_under"
   <operand> a number (e.g. 30, 1.5) OR one of the canonical tokens below.
+  <pattern> one of VALID_PATTERNS — a self-contained price-action predicate
+            (candlestick / structure break) needing no left/op/right.
 
 Canonical operand vocabulary (case-insensitive)
 -----------------------------------------------
@@ -27,6 +32,7 @@ Canonical operand vocabulary (case-insensitive)
   momentum:     macd_line macd_signal macd_hist
   stochastic:   stoch_k stoch_d
   volume-px:    vwap
+  structure:    swing_high_<n>  swing_low_<n>   e.g. swing_high_5, swing_low_5
 
 Anything outside this vocabulary is allowed in the human `text` of a condition,
 but should be left out of `machine` so the generators don't emit broken code.
@@ -43,10 +49,21 @@ volatility: atr_<n>, bb_upper, bb_lower, bb_basis
 momentum:   macd_line, macd_signal, macd_hist
 stochastic: stoch_k, stoch_d
 volume-px:  vwap
+structure:  swing_high_<n>, swing_low_<n>   (e.g. swing_high_5, swing_low_5)
 numbers:    any literal number (30, 1.5, 0.02)
 """.strip()
 
 VALID_OPS = ("<", ">", "<=", ">=", "==", "cross_over", "cross_under")
+
+# Self-contained price-action predicates usable as {"pattern": <name>}.
+VALID_PATTERNS = (
+    "bullish_engulfing",
+    "bearish_engulfing",
+    "hammer",
+    "shooting_star",
+    "close_above_prev_high",
+    "close_below_prev_low",
+)
 
 # The exact JSON shape the model must return (shown to it verbatim in the prompt).
 SCHEMA_SHAPE = """
@@ -67,7 +84,11 @@ SCHEMA_SHAPE = """
        {"text": "price pulls back to the 20 EMA in an uptrend",
         "machine": {"left": "close", "op": "<=", "right": "ema_20"}},
        {"text": "RSI above 50 (trend intact)",
-        "machine": {"left": "rsi_14", "op": ">", "right": 50}}
+        "machine": {"left": "rsi_14", "op": ">", "right": 50}},
+       {"text": "candle closes above the prior candle's high (price-action trigger)",
+        "machine": {"pattern": "close_above_prev_high"}},
+       {"text": "price breaks and closes above the recent swing high",
+        "machine": {"left": "close", "op": "cross_over", "right": "swing_high_5"}}
      ],
      "evidence": {"video_id": "...", "title": "...", "quote": "..."},
      "confidence": 0.0}

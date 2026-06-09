@@ -1,7 +1,7 @@
 """Prompts for the map (per-video extract) and reduce (merge) passes."""
 from __future__ import annotations
 
-from .schema import OPERAND_VOCAB, SCHEMA_SHAPE
+from .schema import OPERAND_VOCAB, SCHEMA_SHAPE, VALID_PATTERNS
 
 EXTRACT_SYSTEM = (
     "You are a quantitative trading analyst. You reverse-engineer a trader's "
@@ -36,8 +36,27 @@ implies. Follow these rules strictly:
 Operand vocabulary for `machine` predicates:
 {OPERAND_VOCAB}
 
-Predicate form: {{"left": <operand>, "op": <op>, "right": <operand>}}
-Valid ops: "<", ">", "<=", ">=", "==", "cross_over", "cross_under"
+A `machine` predicate takes ONE of two forms:
+  1. Comparison: {{"left": <operand>, "op": <op>, "right": <operand>}}
+     Valid ops: "<", ">", "<=", ">=", "==", "cross_over", "cross_under"
+  2. Pattern:    {{"pattern": <pattern_name>}}
+     Valid patterns: {", ".join(VALID_PATTERNS)}
+
+Structure operands (usable as <operand> in a comparison):
+  swing_high_<n>, swing_low_<n>  — the last confirmed pivot high/low using a
+  lookback of <n> bars (e.g. swing_high_5). Default to n=5 unless the trader
+  specifies a different pivot lookback.
+
+Map common price-action phrasing to predicates (emit machine ONLY when it maps
+this cleanly; otherwise keep text only):
+  "close above the prior candle's high"            -> {{"pattern": "close_above_prev_high"}}
+  "close below the prior candle's low"             -> {{"pattern": "close_below_prev_low"}}
+  "bullish engulfing entry"                        -> {{"pattern": "bullish_engulfing"}}
+  "bearish engulfing entry"                        -> {{"pattern": "bearish_engulfing"}}
+  "hammer / pin bar (bullish)"                      -> {{"pattern": "hammer"}}
+  "shooting star (bearish)"                         -> {{"pattern": "shooting_star"}}
+  "break and close above the swing high"           -> {{"left": "close", "op": "cross_over", "right": "swing_high_5"}}
+  "price above the most recent swing low (uptrend intact)" -> {{"left": "close", "op": ">", "right": "swing_low_5"}}
 
 Return JSON in EXACTLY this shape (omit/empty anything not present in the video):
 {SCHEMA_SHAPE}

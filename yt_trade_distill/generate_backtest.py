@@ -44,6 +44,14 @@ def _bb(c, n=20, k=2.0):
 def _stoch(df, n=14, d=3):
     ll = df["Low"].rolling(n).min(); hh = df["High"].rolling(n).max()
     k = 100 * (df["Close"] - ll) / (hh - ll); return k, k.rolling(d).mean()
+def _swing_high(df, n):
+    h = df["High"]; win = 2*n+1
+    piv = h.where(h == h.rolling(win, center=True).max()).shift(n)
+    return piv.ffill()
+def _swing_low(df, n):
+    l = df["Low"]; win = 2*n+1
+    piv = l.where(l == l.rolling(win, center=True).min()).shift(n)
+    return piv.ffill()
 def _crossover(a, b):  return (a > b) & (a.shift() <= b.shift())
 def _crossunder(a, b): return (a < b) & (a.shift() >= b.shift())
 '''

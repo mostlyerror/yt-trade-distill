@@ -11,7 +11,9 @@ Merging structured JSON is lossless and lets the model detect contradictions.
 from __future__ import annotations
 
 import json
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .ingest import Video
 from .llm import LLM
@@ -21,6 +23,7 @@ from .prompts import extract_prompt, reduce_prompt
 # leaving ample room in a 200k-context model for instructions + output.
 _CHUNK_CHARS = 48_000
 _REDUCE_BATCH = 12  # per-video extractions merged per reduce call
+_MAP_WORKERS = int(os.environ.get("YTD_MAP_WORKERS", "6"))
 
 
 def extract_json(text: str) -> dict:
@@ -77,21 +80,37 @@ def _merge_chunk_extractions(parts: list[dict], video: Video) -> dict:
     return merged
 
 
+def _map_one(i, v, llm):
+    """Extract one video (chunk loop + merge). Returns a merged dict or None."""
+    print(f"  [map {i}] {v.title[:60]}")
+    chunks = _chunk(v.text)
+    parts: list[dict] = []
+    for j, c in enumerate(chunks):
+        prompt = extract_prompt(v.title, v.id, v.upload_date, c)
+        try:
+            parts.append(extract_json(llm.complete(prompt, system=None)))
+        except (ValueError, json.JSONDecodeError) as e:
+            print(f"        chunk {j} skipped: {e}")
+    if parts:
+        return _merge_chunk_extractions(parts, v)
+    return None
+
+
 def map_videos(videos: list[Video], llm: LLM) -> list[dict]:
-    extractions: list[dict] = []
-    for i, v in enumerate(videos, 1):
-        print(f"  [map {i}/{len(videos)}] {v.title[:60]}")
-        chunks = _chunk(v.text)
-        parts: list[dict] = []
-        for j, c in enumerate(chunks):
-            prompt = extract_prompt(v.title, v.id, v.upload_date, c)
+    results: list[dict | None] = [None] * len(videos)
+    with ThreadPoolExecutor(max_workers=_MAP_WORKERS) as pool:
+        futures = {
+            pool.submit(_map_one, idx + 1, v, llm): idx
+            for idx, v in enumerate(videos)
+        }
+        for fut in as_completed(futures):
+            idx = futures[fut]
             try:
-                parts.append(extract_json(llm.complete(prompt, system=None)))
-            except (ValueError, json.JSONDecodeError) as e:
-                print(f"        chunk {j} skipped: {e}")
-        if parts:
-            extractions.append(_merge_chunk_extractions(parts, v))
-    return extractions
+                results[idx] = fut.result()
+            except Exception as e:
+                print(f"        video {idx + 1} failed: {e}")
+                results[idx] = None
+    return [r for r in results if r is not None]
 
 
 def _reduce_once(channel: str, partials: list[dict], llm: LLM, is_final: bool) -> dict:
