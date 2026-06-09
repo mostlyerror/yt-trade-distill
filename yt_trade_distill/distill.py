@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .ingest import Video
@@ -151,7 +152,6 @@ def build_video_index(extractions: list[dict]) -> dict:
 
 def _map_one(i, v, llm):
     """Extract one video (chunk loop + merge). Returns a merged dict or None."""
-    print(f"  [map {i}] {v.title[:60]}")
     chunks = _chunk(v.text)
     parts: list[dict] = []
     for j, c in enumerate(chunks):
@@ -165,20 +165,51 @@ def _map_one(i, v, llm):
     return None
 
 
+def _draw_progress(done: int, total: int, label: str = "map", width: int = 24) -> None:
+    """A zero-dependency TTY progress bar (no tqdm — keeps the pipeline dep-free)."""
+    if not sys.stderr.isatty():
+        return
+    filled = int(width * done / total) if total else width
+    bar = "█" * filled + "░" * (width - filled)
+    print(f"\r  {label} ▕{bar}▏ {done}/{total}", end="", file=sys.stderr, flush=True)
+
+
 def map_videos(videos: list[Video], llm: LLM) -> list[dict]:
     results: list[dict | None] = [None] * len(videos)
-    with ThreadPoolExecutor(max_workers=_MAP_WORKERS) as pool:
-        futures = {
-            pool.submit(_map_one, idx + 1, v, llm): idx
-            for idx, v in enumerate(videos)
-        }
-        for fut in as_completed(futures):
-            idx = futures[fut]
-            try:
-                results[idx] = fut.result()
-            except Exception as e:
-                print(f"        video {idx + 1} failed: {e}")
-                results[idx] = None
+    total = len(videos)
+    tty = sys.stderr.isatty()
+
+    # The bar owns stderr for the duration; per-call heartbeats would clobber it.
+    prev_hb = getattr(llm, "heartbeat", None)
+    if prev_hb is not None:
+        llm.heartbeat = False
+
+    _draw_progress(0, total)
+    try:
+        with ThreadPoolExecutor(max_workers=_MAP_WORKERS) as pool:
+            futures = {
+                pool.submit(_map_one, idx + 1, v, llm): idx
+                for idx, v in enumerate(videos)
+            }
+            done = 0
+            for fut in as_completed(futures):
+                idx = futures[fut]
+                try:
+                    results[idx] = fut.result()
+                except Exception as e:
+                    results[idx] = None
+                    print(f"\n        video {idx + 1} failed: {e}", file=sys.stderr, flush=True)
+                done += 1
+                if tty:
+                    _draw_progress(done, total)
+                else:  # non-TTY (logfile/pipe): one readable line per completion
+                    print(f"  [map {done}/{total}] {videos[idx].title[:60]}", flush=True)
+    finally:
+        if prev_hb is not None:
+            llm.heartbeat = prev_hb
+
+    if tty:
+        print(file=sys.stderr, flush=True)  # newline to close the bar
     return [r for r in results if r is not None]
 
 

@@ -3,6 +3,11 @@
 Each case mirrors a real or plausible LLM output shape. Against the OLD
 implementation, cases A/B/D raise JSONDecodeError or return the wrong object;
 the fix must make all of them return the real spec."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from yt_trade_distill.distill import extract_json
 
 REAL = ('{"philosophy_summary":"trend trader","markets":["US equities"],'
