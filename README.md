@@ -101,7 +101,7 @@ runtime scaffold to fill in against a feed (Databento MBO, or a broker L2 API).
 | file | what |
 |------|------|
 | `strategy.json` | the structured distillation (the contract) |
-| `report.md` | readable rules + source quotes + contradictions |
+| `report.md` | readable rules + source quotes + contradictions + **per-rule provenance** (every video a rule came from: date · content-type · title) |
 | `strategy.pine` | paste into TradingView → Pine Editor → Strategy Tester |
 | `backtest.py` | `python backtest.py ohlcv.csv` (needs `pandas`, `numpy`) |
 | `tape_features.json` | Level-2 / order-flow rules mapped to named microstructure primitives + the data fidelity each needs + TODO thresholds *(only if the channel reads the tape)* |
@@ -126,7 +126,16 @@ python out/<slug>/backtest.py path/to/ohlcv.csv
 
 - ~~Structure primitives (pivots, candlestick patterns)~~ — **done.**
 - ~~Parallelize the map pass~~ — **done** (`YTD_MAP_WORKERS`, default 6).
+- ~~Per-rule provenance~~ — **done.** Every rule in `report.md` lists every
+  video it was sourced from (date · content-type · title), so a rule whose only
+  source is a vlog/promo is visibly lower-provenance.
+- ~~Relevance filter (drop non-strategy videos before extraction)~~ —
+  **deliberately not built.** Dropping whole videos is the wrong granularity:
+  a vlog can still contain a real rule, and the extractor already ignores videos
+  that yield no concrete rules. Per-rule confidence + provenance (above) solve
+  the actual problem — *attribution*, not exclusion — without ever discarding a
+  nugget. A cheap pre-extraction gate only pays off on paid-API + very large
+  junk-heavy channels; revisit if/when that combination shows up.
 - **More structure primitives** — supply/demand zone width, break-and-retest
   sequences, multi-timeframe confirmation (these stay discretionary for now).
-- **Relevance filter** — skip non-strategy videos (Q&As, vlogs) before extraction.
 - Additional LLM providers (Anthropic API, Ollama).

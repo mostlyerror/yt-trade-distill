@@ -1,6 +1,48 @@
 """Stage 4 — Render strategy.json into a readable Markdown distillation."""
 from __future__ import annotations
 
+from .schema import CONTENT_TYPES
+
+
+def _fmt_date(d) -> str:
+    s = str(d or "").strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
+    return s or "?"
+
+
+def _provenance(obj: dict, vindex: dict) -> str:
+    """One indented line listing every video a rule was sourced from.
+
+    Joins the rule's `sources` (a list of video_ids supplied by the reduce pass)
+    against the deterministic `video_index`, so date + content_type + title are
+    authoritative regardless of what the model said. Falls back to the single
+    `evidence.video_id` for older specs, and renders nothing when there's no
+    index at all — keeping pre-provenance specs working unchanged.
+    """
+    if not vindex:
+        return ""
+    srcs = (obj or {}).get("sources")
+    if not srcs:
+        ev = (obj or {}).get("evidence") or {}
+        srcs = [ev["video_id"]] if ev.get("video_id") else []
+    seen: list[str] = []
+    for vid in srcs:
+        if vid and vid not in seen:
+            seen.append(vid)
+    if not seen:
+        return ""
+    pieces = []
+    for vid in seen:
+        info = vindex.get(vid)
+        if info:
+            title = (info.get("title") or "")[:48]
+            pieces.append(f"{_fmt_date(info.get('upload_date'))} · {info.get('content_type', '?')} · “{title}”")
+        else:
+            pieces.append(vid)
+    label = "source" if len(pieces) == 1 else "sources"
+    return f"  - ↳ _{len(pieces)} {label}: {' · '.join(pieces)}_"
+
 
 def _ev(obj: dict) -> str:
     ev = (obj or {}).get("evidence") or {}
@@ -26,6 +68,7 @@ def _cond_line(c: dict) -> str:
 
 def generate_report(spec: dict) -> str:
     meta = spec.get("meta", {})
+    vindex = spec.get("video_index") or {}
     L: list[str] = []
     L.append(f"# Distilled strategy — {meta.get('channel', 'channel')}")
     L.append("")
@@ -47,6 +90,29 @@ def generate_report(spec: dict) -> str:
     kv("Timeframes", spec.get("timeframes"))
     L.append("")
 
+    if vindex:
+        breakdown = meta.get("content_type_breakdown") or {}
+        L.append("## Videos analyzed (provenance)")
+        summary = ", ".join(f"{breakdown[ct]} {ct}" for ct in CONTENT_TYPES if breakdown.get(ct))
+        L.append(f"*{len(vindex)} videos. Every rule below lists the videos it came from "
+                 "(date · type · title). Content type is a signal to weigh, not a filter — "
+                 "a rule sourced only from a vlog/promo is real but lower-provenance.*")
+        if summary:
+            L.append(f"- **Mix:** {summary}")
+        by_type: dict[str, list] = {}
+        for vid, info in vindex.items():
+            by_type.setdefault(info.get("content_type") or "other", []).append((vid, info))
+        for ct in CONTENT_TYPES:
+            rows = by_type.get(ct)
+            if not rows:
+                continue
+            rows.sort(key=lambda r: str(r[1].get("upload_date") or ""), reverse=True)
+            L.append(f"- **{ct}** ({len(rows)})")
+            for vid, info in rows:
+                L.append(f"  - {_fmt_date(info.get('upload_date'))} — {(info.get('title') or '')[:70]} "
+                         f"([{vid}]({info.get('url', '')}))")
+        L.append("")
+
     if spec.get("indicators"):
         L.append("## Indicators")
         for ind in spec["indicators"]:
@@ -54,12 +120,16 @@ def generate_report(spec: dict) -> str:
             head = f"- **{ind.get('name', '?')}**" + (f" ({params})" if params else "")
             purpose = ind.get("purpose")
             L.append(head + (f" — {purpose}" if purpose else "") + _ev(ind))
+            if p := _provenance(ind, vindex):
+                L.append(p)
         L.append("")
 
     if spec.get("filters"):
         L.append("## Filters (apply to every entry)")
         for f in spec["filters"]:
             L.append(f"- {_cond_line(f)}" + _ev(f))
+            if p := _provenance(f, vindex):
+                L.append(p)
         L.append("")
 
     if spec.get("entry_rules"):
@@ -70,6 +140,8 @@ def generate_report(spec: dict) -> str:
             for c in r.get("conditions", []):
                 L.append(f"- {_cond_line(c)}")
             L.append(_ev(r).strip())
+            if p := _provenance(r, vindex):
+                L.append(p)
             L.append("")
 
     ex = spec.get("exit_rules") or {}
@@ -78,9 +150,13 @@ def generate_report(spec: dict) -> str:
         sl = ex.get("stop_loss") or {}
         if sl.get("type"):
             L.append(f"- **Stop:** {sl.get('type')} = {sl.get('value', '')}" + _ev(sl))
+            if p := _provenance(sl, vindex):
+                L.append(p)
         for tp in ex.get("take_profit") or []:
             L.append(f"- **Take profit:** {tp.get('type')} = {tp.get('value', '')} "
                      f"{tp.get('note', '')}".rstrip() + _ev(tp))
+            if p := _provenance(tp, vindex):
+                L.append(p)
         tr = ex.get("trailing") or {}
         if tr.get("type") and tr.get("type") != "none":
             L.append(f"- **Trailing:** {tr.get('type')} = {tr.get('value', '')}" + _ev(tr))
@@ -131,6 +207,8 @@ def generate_report(spec: dict) -> str:
             ev = _ev(f).strip()
             if ev:
                 L.append(f"  {ev}")
+            if p := _provenance(f, vindex):
+                L.append(p)
         L.append("")
 
     if spec.get("free_data_features"):

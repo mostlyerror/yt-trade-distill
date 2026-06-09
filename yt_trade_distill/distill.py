@@ -76,8 +76,36 @@ def _merge_chunk_extractions(parts: list[dict], video: Video) -> dict:
                         merged[k] = {**v, **merged[k]}
                 elif v and not merged.get(k):
                     merged[k] = v
-    merged["_video"] = {"id": video.id, "title": video.title, "upload_date": video.upload_date}
+    merged["_video"] = {
+        "id": video.id,
+        "title": video.title,
+        "upload_date": video.upload_date,
+        "content_type": merged.get("content_type") or "other",
+    }
     return merged
+
+
+def build_video_index(extractions: list[dict]) -> dict:
+    """Deterministic {video_id: {title, upload_date, content_type, url}} map.
+
+    Built from the per-video extractions (NOT by the LLM), this is the authority
+    the report joins each rule's `sources` against — so a rule's provenance line
+    (date + content_type + title) never depends on the model getting metadata
+    right. The model only ever supplies the list of supporting video_ids.
+    """
+    index: dict[str, dict] = {}
+    for e in extractions:
+        v = e.get("_video") or {}
+        vid = v.get("id")
+        if not vid:
+            continue
+        index[vid] = {
+            "title": v.get("title", ""),
+            "upload_date": v.get("upload_date"),
+            "content_type": v.get("content_type") or e.get("content_type") or "other",
+            "url": f"https://www.youtube.com/watch?v={vid}",
+        }
+    return index
 
 
 def _map_one(i, v, llm):
@@ -139,7 +167,18 @@ def distill(channel: str, videos: list[Video], llm: LLM) -> tuple[dict, list[dic
     """Run the full map/reduce. Returns (canonical_spec, per_video_extractions)."""
     extractions = map_videos(videos, llm)
     spec = reduce_extractions(channel, extractions, llm)
+
+    # Provenance layer: a deterministic video roster the report joins rule
+    # `sources` against, plus a content-type breakdown of what was analyzed.
+    video_index = build_video_index(extractions)
+    spec["video_index"] = video_index
+    breakdown: dict[str, int] = {}
+    for info in video_index.values():
+        ct = info.get("content_type") or "other"
+        breakdown[ct] = breakdown.get(ct, 0) + 1
+
     spec.setdefault("meta", {})
     spec["meta"]["channel"] = channel
     spec["meta"]["videos_analyzed"] = len(extractions)
+    spec["meta"]["content_type_breakdown"] = breakdown
     return spec, extractions

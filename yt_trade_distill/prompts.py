@@ -1,7 +1,7 @@
 """Prompts for the map (per-video extract) and reduce (merge) passes."""
 from __future__ import annotations
 
-from .schema import OPERAND_VOCAB, SCHEMA_SHAPE, TAPE_VOCAB, VALID_PATTERNS
+from .schema import CONTENT_TYPES, OPERAND_VOCAB, SCHEMA_SHAPE, TAPE_VOCAB, VALID_PATTERNS
 
 EXTRACT_SYSTEM = (
     "You are a quantitative trading analyst. You reverse-engineer a trader's "
@@ -76,7 +76,18 @@ Never invent a numeric threshold the trader didn't state — leave value null wi
 Set `gates` to one of: entry | exit | filter | sizing | timing, and `direction`
 to long/short/na. Attach evidence + confidence like everything else.
 
-Return JSON in EXACTLY this shape (omit/empty anything not present in the video):
+ALSO classify this video. Add a top-level field:
+  "content_type": ONE of [{", ".join(CONTENT_TYPES)}]
+Pick the video's DOMINANT type. This does NOT change what you extract — pull
+every concrete rule regardless of type (a vlog or Q&A can still contain a real
+rule; extract it). The label is only provenance for later. Rough guide:
+  strategy = teaches concrete setups/rules · trade_recap = walks specific trades
+  educational = explains concepts generally · qa = Q&A/mailbag
+  market_update = news/watchlist/what's-moving · vlog = lifestyle/desk-tour/story
+  promo = course/Discord/affiliate pitch · other = none of these.
+
+Return JSON in EXACTLY this shape (omit/empty anything not present in the video),
+plus the top-level "content_type" field described above:
 {SCHEMA_SHAPE}
 
 TRANSCRIPT:
@@ -116,6 +127,15 @@ Merge rules:
 - Merge `tape_features` the same way: dedupe by (primitive, gates, direction),
   keep the richest param `todo`s, preserve every distinct order-flow rule.
 - Preserve `evidence` and `confidence` on the surviving rules.
+- PROVENANCE: give every rule, indicator, filter, exit, and tape_feature a
+  `"sources"` field: the list of ALL video_ids whose extraction supports it.
+  • When you DEDUPLICATE the same rule across several videos, UNION their
+    video_ids into one `sources` list — do not drop any.
+  • The video_id in a rule's `evidence` MUST also appear in its `sources`.
+  • If an input rule already has a `sources` list (you are merging partials),
+    union those lists; if it has no `sources`, fall back to its `evidence.video_id`.
+  This is how the report shows every video a rule came from — never collapse it
+  to a single source when multiple videos stated the same thing.
 - Write a tight `philosophy_summary` capturing the trader's actual edge/approach.
 - Do not invent rules that no video supports.
 

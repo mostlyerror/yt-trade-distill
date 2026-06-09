@@ -56,6 +56,23 @@ numbers:    any literal number (30, 1.5, 0.02)
 
 VALID_OPS = ("<", ">", "<=", ">=", "==", "cross_over", "cross_under")
 
+# Per-video content classification — the "provenance" layer. The extractor tags
+# each video with its dominant type. This NEVER gates extraction: every rule is
+# pulled from every video regardless of type. The label only travels with the
+# rule (via the reduce pass's source list + the video_index) so the report can
+# show, e.g., "this rule's only source is a promo video." It's a caveat to weigh,
+# not a filter — a nugget buried in a vlog still survives, just stamped as such.
+CONTENT_TYPES = (
+    "strategy",       # teaches concrete setups / mechanical rules
+    "trade_recap",    # walks through specific trades taken
+    "educational",    # explains concepts/indicators in general
+    "qa",             # Q&A / mailbag
+    "market_update",  # news / watchlist / what's moving today
+    "vlog",           # lifestyle, desk tour, story time, day-in-the-life
+    "promo",          # course / Discord / affiliate pitch
+    "other",
+)
+
 # Self-contained price-action predicates usable as {"pattern": <name>}.
 VALID_PATTERNS = (
     "bullish_engulfing",
