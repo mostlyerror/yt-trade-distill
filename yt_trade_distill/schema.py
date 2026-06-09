@@ -65,6 +65,35 @@ VALID_PATTERNS = (
     "close_below_prev_low",
 )
 
+# ---------------------------------------------------------------------------
+# Microstructure / Level-2 layer.
+#
+# Bar data (and therefore Pine/pandas) can NOT see the order book. Tape-reading
+# rules — Level 2 depth, time & sales, icebergs, aggressor flow — are routed
+# here instead of being faked into bar logic. Each primitive names a known
+# microstructure feature and declares the minimum DATA FIDELITY it needs:
+#   trades        : time & sales only (executions)
+#   trades+quotes : executions + NBBO (best bid/ask) — enables aggressor side
+#   MBP-10        : aggregated depth-of-book, top ~10 levels per side
+#   MBO           : full order-by-order (every add/cancel/execute) — required
+#                   for hidden-liquidity / iceberg detection
+# ---------------------------------------------------------------------------
+TAPE_PRIMITIVES = {
+    "order_flow_imbalance": "trades+quotes",   # net aggressive buy vs sell volume over a window
+    "trade_aggressor_ratio": "trades+quotes",  # share of volume lifting the offer vs hitting the bid
+    "depth_imbalance": "MBP-10",               # top-N bid size vs ask size
+    "absorption": "trades+quotes",             # heavy volume at a level with little price movement
+    "iceberg_detection": "MBO",                # displayed size keeps refilling as prints execute through it
+    "iceberg_exhaustion": "MBO",               # a previously-active iceberg stops reloading (big player done)
+    "liquidity_sweep": "MBP-10",               # one aggressive order takes multiple price levels at once
+    "bid_ladder_lift": "MBP-10",               # best bid steps higher / best offer steps lower repeatedly
+    "large_print": "trades",                   # single block execution above a size threshold
+    "relative_volume": "trades",               # current volume vs historical average (in-play filter)
+    "spread_filter": "trades+quotes",          # spread too wide / halt / microcap risk avoidance
+}
+
+TAPE_VOCAB = "\n".join(f"  {k:<22} (needs {v})" for k, v in TAPE_PRIMITIVES.items())
+
 # The exact JSON shape the model must return (shown to it verbatim in the prompt).
 SCHEMA_SHAPE = """
 {
@@ -116,7 +145,16 @@ SCHEMA_SHAPE = """
      "evidence": {"video_id": "...", "title": "...", "quote": "..."}, "confidence": 0.0}
   ],
   "risk_management": {"max_daily_loss": "", "max_drawdown": "", "max_trades_per_day": "", "notes": ""},
-  "discretionary_notes": ["Rules the trader uses that are real but NOT mechanizable from what they said."],
+  "tape_features": [
+    {"id": "seller_exhaustion_long", "primitive": "iceberg_exhaustion", "side": "ask",
+     "gates": "entry", "direction": "long",
+     "description": "go long once the large refreshing seller (iceberg) on the offer stops reloading",
+     "params": {"no_reload_window_s": {"value": null, "todo": "seconds with no reload that means the seller is done?"},
+                "min_reloads_to_count": {"value": null, "todo": "how many prior reloads qualify it as a real iceberg?"}},
+     "data_requirement": "MBO",
+     "evidence": {"video_id": "...", "title": "...", "quote": "..."}, "confidence": 0.0}
+  ],
+  "discretionary_notes": ["Rules the trader uses that are real but NOT mechanizable from what they said (and not a tape_feature either)."],
   "contradictions": [
     {"topic": "stop placement",
      "positions": [{"video_id": "...", "date": "YYYYMMDD", "claim": "..."}]}

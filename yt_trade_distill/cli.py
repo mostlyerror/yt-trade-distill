@@ -10,6 +10,7 @@ from . import __version__
 from .distill import distill
 from .generate_backtest import generate_backtest
 from .generate_pine import generate_pine
+from .generate_tape_spec import write_tape_artifacts
 from .ingest import _slug, ingest
 from .llm import get_llm
 from .report import generate_report
@@ -60,12 +61,16 @@ def main(argv: list[str] | None = None) -> int:
     open(pine_path, "w", encoding="utf-8").write(generate_pine(spec))
     open(bt_path, "w", encoding="utf-8").write(generate_backtest(spec))
     open(report_path, "w", encoding="utf-8").write(generate_report(spec))
+    wrote_tape = write_tape_artifacts(spec, out_dir)
 
     print("\n✓ Done. Outputs:")
     print(f"  • {spec_path}      — structured strategy (the distillation)")
     print(f"  • {report_path}        — human-readable summary with source quotes")
     print(f"  • {pine_path}      — paste into TradingView → Pine Editor → Strategy Tester")
     print(f"  • {bt_path}        — python backtest.py <ohlcv.csv>  (needs pandas, numpy)")
+    if wrote_tape:
+        print(f"  • {os.path.join(out_dir, 'tape_features.json')}  — Level-2/order-flow target spec")
+        print(f"  • {os.path.join(out_dir, 'tape_engine_stub.py')} — data-agnostic real-time engine scaffold")
     return 0
 
 

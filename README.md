@@ -76,9 +76,25 @@ A condition's `machine` field is one of two forms:
 
 > **Indicator- and structure-based channels** (EMA/RSI/MACD crossovers, VWAP,
 > Bollinger, swing breakouts, candle-pattern entries) generate a runnable Pine
-> strategy. Genuinely discretionary edge (tape reading, Level 2, "clean price
-> action", visual zone-drawing) is preserved as traceable `// TODO discretionary:`
-> comments — never fabricated into mechanical thresholds.
+> strategy. Genuinely discretionary edge ("clean price action", visual
+> zone-drawing) is preserved as traceable `// TODO discretionary:` comments —
+> never fabricated into mechanical thresholds.
+
+## Level-2 / order-flow layer (`tape_features`)
+
+Bar data (Pine, pandas) is blind to the order book, so tape-reading rules —
+Level 2 depth, time & sales, icebergs, aggressor flow — are distilled into
+`tape_features` instead. Each rule is mapped to a named microstructure primitive
+tagged with the **data fidelity** it needs:
+
+- `trades` — time & sales only · `trades+quotes` — + NBBO (enables aggressor side)
+- `MBP-10` — aggregated depth · `MBO` — full order-by-order (required for icebergs)
+
+Primitives: `order_flow_imbalance trade_aggressor_ratio depth_imbalance absorption
+iceberg_detection iceberg_exhaustion liquidity_sweep bid_ladder_lift large_print
+relative_volume spread_filter`. Unstated thresholds become `{"value": null,
+"todo": ...}` — named, not guessed. `tape_engine_stub.py` is the data-agnostic
+runtime scaffold to fill in against a feed (Databento MBO, or a broker L2 API).
 
 ## Outputs (under `out/<channel-slug>/`)
 
@@ -88,6 +104,8 @@ A condition's `machine` field is one of two forms:
 | `report.md` | readable rules + source quotes + contradictions |
 | `strategy.pine` | paste into TradingView → Pine Editor → Strategy Tester |
 | `backtest.py` | `python backtest.py ohlcv.csv` (needs `pandas`, `numpy`) |
+| `tape_features.json` | Level-2 / order-flow rules mapped to named microstructure primitives + the data fidelity each needs + TODO thresholds *(only if the channel reads the tape)* |
+| `tape_engine_stub.py` | data-agnostic real-time engine scaffold (Feed protocol + one stub per primitive) |
 | `extractions.json` | raw per-video extractions (debug/audit) |
 
 ## Install / run

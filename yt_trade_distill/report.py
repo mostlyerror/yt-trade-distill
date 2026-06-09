@@ -110,6 +110,29 @@ def generate_report(spec: dict) -> str:
                 L.append(f"- **{k.replace('_', ' ').title()}:** {v}")
         L.append("")
 
+    if spec.get("tape_features"):
+        L.append("## Level-2 / order-flow features (microstructure target)")
+        L.append("*Tape rules bar data can't see. Each names a microstructure primitive + the "
+                 "data fidelity it needs; `TODO` params are thresholds you must set and validate.*")
+        for f in spec["tape_features"]:
+            head = (f"- **{f.get('primitive', '?')}** "
+                    f"[{f.get('gates', '?')}/{f.get('direction', 'na')}] "
+                    f"— needs `{f.get('data_requirement', '?')}` data")
+            L.append(head)
+            if f.get("description"):
+                L.append(f"  - {f['description']}")
+            for k, v in (f.get("params") or {}).items():
+                if isinstance(v, dict):
+                    val = v.get("value")
+                    if val is None:
+                        L.append(f"  - `{k}` = **TODO** — {v.get('todo', '')}")
+                    else:
+                        L.append(f"  - `{k}` = {val}")
+            ev = _ev(f).strip()
+            if ev:
+                L.append(f"  {ev}")
+        L.append("")
+
     if spec.get("discretionary_notes"):
         L.append("## ⚠️ Discretionary (not mechanizable)")
         L.append("*The trader relies on these, but they can't be coded from what was said:*")

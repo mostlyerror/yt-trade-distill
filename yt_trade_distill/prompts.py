@@ -1,7 +1,7 @@
 """Prompts for the map (per-video extract) and reduce (merge) passes."""
 from __future__ import annotations
 
-from .schema import OPERAND_VOCAB, SCHEMA_SHAPE, VALID_PATTERNS
+from .schema import OPERAND_VOCAB, SCHEMA_SHAPE, TAPE_VOCAB, VALID_PATTERNS
 
 EXTRACT_SYSTEM = (
     "You are a quantitative trading analyst. You reverse-engineer a trader's "
@@ -58,6 +58,20 @@ this cleanly; otherwise keep text only):
   "break and close above the swing high"           -> {{"left": "close", "op": "cross_over", "right": "swing_high_5"}}
   "price above the most recent swing low (uptrend intact)" -> {{"left": "close", "op": ">", "right": "swing_low_5"}}
 
+ORDER-FLOW / LEVEL-2 / TAPE rules — populate `tape_features`:
+Bar data cannot see the order book, so any rule about Level 2 depth, time & sales,
+the tape, icebergs/hidden liquidity, bids/offers refreshing, aggressive
+buyers/sellers, absorption, sweeps, or relative volume must be captured as a
+`tape_features` entry (NOT as a `machine` predicate, and in addition to leaving
+the human description in discretionary_notes).
+Map each such rule to the CLOSEST primitive below and pick its data_requirement:
+{TAPE_VOCAB}
+For every threshold the trader does NOT quantify, emit a param as
+{{"value": null, "todo": "<the precise question a quant must answer to set it>"}}.
+Never invent a numeric threshold the trader didn't state — leave value null with a todo.
+Set `gates` to one of: entry | exit | filter | sizing | timing, and `direction`
+to long/short/na. Attach evidence + confidence like everything else.
+
 Return JSON in EXACTLY this shape (omit/empty anything not present in the video):
 {SCHEMA_SHAPE}
 
@@ -95,6 +109,8 @@ Merge rules:
   record both sides in `contradictions[]` with their dates. A trader's
   philosophy evolves — reflect their current thinking but keep the history.
 - Keep every `machine` predicate you can; never weaken a concrete rule into prose.
+- Merge `tape_features` the same way: dedupe by (primitive, gates, direction),
+  keep the richest param `todo`s, preserve every distinct order-flow rule.
 - Preserve `evidence` and `confidence` on the surviving rules.
 - Write a tight `philosophy_summary` capturing the trader's actual edge/approach.
 - Do not invent rules that no video supports.
