@@ -1,0 +1,126 @@
+"""Stage 2 — Distill. Transcripts -> one canonical strategy.json via map/reduce.
+
+map:    each video -> structured extraction (parallel-friendly, cheap)
+reduce: merge extractions -> one spec. Done HIERARCHICALLY (in batches, then
+        merge the batch-results) so a 200-video channel never overflows context.
+
+Why map/reduce instead of one giant prompt? Stuffing every transcript into a
+single call loses detail and can't reliably compare video #3 against video #170.
+Merging structured JSON is lossless and lets the model detect contradictions.
+"""
+from __future__ import annotations
+
+import json
+import re
+
+from .ingest import Video
+from .llm import LLM
+from .prompts import extract_prompt, reduce_prompt
+
+# Conservative char budgets. ~4 chars/token, so 48k chars ≈ 12k tokens of input,
+# leaving ample room in a 200k-context model for instructions + output.
+_CHUNK_CHARS = 48_000
+_REDUCE_BATCH = 12  # per-video extractions merged per reduce call
+
+
+def extract_json(text: str) -> dict:
+    """Pull a JSON object out of an LLM response, tolerating fences and prose."""
+    text = text.strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
+    if fence:
+        text = fence.group(1).strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError(f"No JSON object in LLM output (got {text[:120]!r}...)")
+    return json.loads(text[start : end + 1])
+
+
+def _chunk(text: str, size: int = _CHUNK_CHARS) -> list[str]:
+    if len(text) <= size:
+        return [text]
+    chunks, buf, count = [], [], 0
+    for para in text.split("\n"):
+        if count + len(para) > size and buf:
+            chunks.append("\n".join(buf))
+            buf, count = [], 0
+        buf.append(para)
+        count += len(para) + 1
+    if buf:
+        chunks.append("\n".join(buf))
+    return chunks
+
+
+def _merge_chunk_extractions(parts: list[dict], video: Video) -> dict:
+    """Combine multiple chunk-extractions from the SAME video into one record.
+
+    Long videos get chunked; we shallow-concatenate list fields and keep the
+    first non-empty scalar. The reduce pass does the real semantic merge later,
+    so this only needs to avoid dropping anything.
+    """
+    if len(parts) == 1:
+        merged = parts[0]
+    else:
+        merged = {}
+        for p in parts:
+            for k, v in p.items():
+                if isinstance(v, list):
+                    merged.setdefault(k, [])
+                    if isinstance(merged[k], list):
+                        merged[k].extend(v)
+                elif isinstance(v, dict):
+                    merged.setdefault(k, {})
+                    if isinstance(merged[k], dict):
+                        merged[k] = {**v, **merged[k]}
+                elif v and not merged.get(k):
+                    merged[k] = v
+    merged["_video"] = {"id": video.id, "title": video.title, "upload_date": video.upload_date}
+    return merged
+
+
+def map_videos(videos: list[Video], llm: LLM) -> list[dict]:
+    extractions: list[dict] = []
+    for i, v in enumerate(videos, 1):
+        print(f"  [map {i}/{len(videos)}] {v.title[:60]}")
+        chunks = _chunk(v.text)
+        parts: list[dict] = []
+        for j, c in enumerate(chunks):
+            prompt = extract_prompt(v.title, v.id, v.upload_date, c)
+            try:
+                parts.append(extract_json(llm.complete(prompt, system=None)))
+            except (ValueError, json.JSONDecodeError) as e:
+                print(f"        chunk {j} skipped: {e}")
+        if parts:
+            extractions.append(_merge_chunk_extractions(parts, v))
+    return extractions
+
+
+def _reduce_once(channel: str, partials: list[dict], llm: LLM, is_final: bool) -> dict:
+    payload = json.dumps(partials, ensure_ascii=False)
+    raw = llm.complete(reduce_prompt(channel, payload, is_final), system=None)
+    return extract_json(raw)
+
+
+def reduce_extractions(channel: str, extractions: list[dict], llm: LLM) -> dict:
+    """Hierarchical reduce: batch -> partial specs -> final spec."""
+    if not extractions:
+        raise ValueError("Nothing to reduce — no usable extractions.")
+    if len(extractions) <= _REDUCE_BATCH:
+        return _reduce_once(channel, extractions, llm, is_final=True)
+
+    partials: list[dict] = []
+    batches = [extractions[i : i + _REDUCE_BATCH] for i in range(0, len(extractions), _REDUCE_BATCH)]
+    for i, batch in enumerate(batches, 1):
+        print(f"  [reduce L1 {i}/{len(batches)}]")
+        partials.append(_reduce_once(channel, batch, llm, is_final=False))
+    print(f"  [reduce L2 final] merging {len(partials)} partials")
+    return _reduce_once(channel, partials, llm, is_final=True)
+
+
+def distill(channel: str, videos: list[Video], llm: LLM) -> tuple[dict, list[dict]]:
+    """Run the full map/reduce. Returns (canonical_spec, per_video_extractions)."""
+    extractions = map_videos(videos, llm)
+    spec = reduce_extractions(channel, extractions, llm)
+    spec.setdefault("meta", {})
+    spec["meta"]["channel"] = channel
+    spec["meta"]["videos_analyzed"] = len(extractions)
+    return spec, extractions

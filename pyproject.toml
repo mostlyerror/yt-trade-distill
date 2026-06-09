@@ -1,0 +1,21 @@
+[project]
+name = "yt-trade-distill"
+version = "0.1.0"
+description = "Distill a YouTube trading channel's philosophy into a mechanical, backtestable strategy spec (+ Pine Script for TradingView)."
+requires-python = ">=3.10"
+# Runtime has NO hard Python deps: it shells out to `yt-dlp` and `claude` (CLIs).
+# The generated backtest.py needs pandas+numpy, declared as an optional extra.
+dependencies = []
+
+[project.optional-dependencies]
+backtest = ["pandas>=2.0", "numpy>=1.24"]
+
+[project.scripts]
+yt-trade-distill = "yt_trade_distill.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["yt_trade_distill", "yt_trade_distill.llm"]
