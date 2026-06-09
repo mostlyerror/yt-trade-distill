@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .ingest import Video
@@ -26,16 +25,58 @@ _REDUCE_BATCH = 12  # per-video extractions merged per reduce call
 _MAP_WORKERS = int(os.environ.get("YTD_MAP_WORKERS", "6"))
 
 
+# Top-level keys that identify one of our objects (spec / partial / per-video
+# extraction). Used to pick the real object out of a decorated LLM response.
+_SPEC_KEYS = frozenset({
+    "philosophy_summary", "markets", "instruments", "timeframes", "indicators",
+    "entry_rules", "exit_rules", "position_sizing", "filters", "risk_management",
+    "tape_features", "discretionary_notes", "contradictions", "content_type",
+})
+
+
+def _iter_json_objects(s: str):
+    """Yield every top-level JSON object in `s`, in order, via a real parser.
+
+    `raw_decode` parses one complete value from a start index and reports where
+    it ended, so we can step past it to the next candidate. Because it's an
+    actual JSON parser, braces inside strings never fool us, and nested objects
+    are consumed as part of their parent (only top-level objects are yielded).
+    """
+    dec = json.JSONDecoder()
+    i, n = 0, len(s)
+    while i < n:
+        j = s.find("{", i)
+        if j == -1:
+            break
+        try:
+            obj, end = dec.raw_decode(s, j)
+        except json.JSONDecodeError:
+            i = j + 1
+            continue
+        if isinstance(obj, dict):
+            yield obj
+        i = end
+
+
 def extract_json(text: str) -> dict:
-    """Pull a JSON object out of an LLM response, tolerating fences and prose."""
-    text = text.strip()
-    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
-    if fence:
-        text = fence.group(1).strip()
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1 or end < start:
+    """Pull the strategy/extraction object out of an LLM response.
+
+    Robust to how `claude -p` decorates output despite "JSON only": code fences,
+    a preamble object, trailing commentary, or several fenced blocks. We collect
+    every top-level object and keep the one that actually looks like our schema
+    (most known keys; largest on a tie). So a stray `{"note": ...}` can't shadow
+    the real spec, trailing prose is ignored, and a single clean object is
+    returned unchanged. (The old find-first-brace-to-last-brace slice broke
+    whenever more than one object was present — see _test_extract_json.py.)
+    """
+    objs = list(_iter_json_objects(text))
+    if not objs:
         raise ValueError(f"No JSON object in LLM output (got {text[:120]!r}...)")
-    return json.loads(text[start : end + 1])
+
+    def score(o: dict) -> tuple[int, int]:
+        return (len(_SPEC_KEYS & o.keys()), len(json.dumps(o, ensure_ascii=False)))
+
+    return max(objs, key=score)
 
 
 def _chunk(text: str, size: int = _CHUNK_CHARS) -> list[str]:
