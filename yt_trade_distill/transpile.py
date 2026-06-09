@@ -17,6 +17,7 @@ _EMA = re.compile(r"^ema_(\d+)$")
 _SMA = re.compile(r"^sma_(\d+)$")
 _RSI = re.compile(r"^rsi_(\d+)$")
 _ATR = re.compile(r"^atr_(\d+)$")
+_RVOL = re.compile(r"^rvol_(\d+)$")
 _SWH = re.compile(r"^swing_high_(\d+)$")
 _SWL = re.compile(r"^swing_low_(\d+)$")
 
@@ -82,6 +83,9 @@ class Transpiler:
             (_SMA, "sma", "ta.sma(close, {n})", "_sma(df['Close'], {n})"),
             (_RSI, "rsi", "ta.rsi(close, {n})", "_rsi(df['Close'], {n})"),
             (_ATR, "atr", "ta.atr({n})",        "_atr(df, {n})"),
+            # relative volume: current volume vs its own N-bar average — a volume
+            # SPIKE / capitulation detector that runs on plain (free) OHLCV.
+            (_RVOL, "rvol", "volume / ta.sma(volume, {n})", "df['Volume'] / _sma(df['Volume'], {n})"),
         ):
             m = rx.match(t)
             if m:

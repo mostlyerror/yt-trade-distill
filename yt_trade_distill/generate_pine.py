@@ -37,6 +37,17 @@ def _stop_block(spec: dict, t: Transpiler, notes: list[str]) -> tuple[list[str],
         lines.append("longStop = strategy.position_avg_price * (1 - slPerc)")
         lines.append("shortStop = strategy.position_avg_price * (1 + slPerc)")
         return lines, True, "fixed_pct"
+    if kind == "structure":
+        # Lance's "stop/trail at the swing low" — a structure-trailing stop. The
+        # swing level ratchets as new pivots form, so longStop rises with the
+        # trend and can lock in profit (an upside-capturing exit, not just a loss).
+        n = int((sl.get("params") or {}).get("swing_length", 5))
+        lo = t.operand(f"swing_low_{n}")
+        hi = t.operand(f"swing_high_{n}")
+        lines.append(f"longStop = {lo}")
+        lines.append(f"shortStop = {hi}")
+        lines.append(f"slDistEntry = close - {lo}  // >0 only when the swing low sits below price")
+        return lines, True, "structure"
     if kind not in ("none", ""):
         notes.append(f"stop_loss: '{sl.get('type')}' ({sl.get('value','')}) — not auto-mechanized")
     return lines, False, None

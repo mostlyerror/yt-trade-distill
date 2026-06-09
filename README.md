@@ -106,6 +106,7 @@ runtime scaffold to fill in against a feed (Databento MBO, or a broker L2 API).
 | `backtest.py` | `python backtest.py ohlcv.csv` (needs `pandas`, `numpy`) |
 | `tape_features.json` | Level-2 / order-flow rules mapped to named microstructure primitives + the data fidelity each needs + TODO thresholds *(only if the channel reads the tape)* |
 | `tape_engine_stub.py` | data-agnostic real-time engine scaffold (Feed protocol + one stub per primitive) |
+| `swing/` | **free-data swing-only variant** — daily-chart system with the intraday/L2 overlay stripped out. `backtest.py` pulls free daily bars via yfinance (`python backtest.py NVDA 5y`). |
 | `extractions.json` | raw per-video extractions (debug/audit) |
 
 ## Install / run

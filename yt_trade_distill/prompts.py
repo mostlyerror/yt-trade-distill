@@ -57,6 +57,10 @@ this cleanly; otherwise keep text only):
   "shooting star (bearish)"                         -> {{"pattern": "shooting_star"}}
   "break and close above the swing high"           -> {{"left": "close", "op": "cross_over", "right": "swing_high_5"}}
   "price above the most recent swing low (uptrend intact)" -> {{"left": "close", "op": ">", "right": "swing_low_5"}}
+  "massive / unusual volume spike (vs average) — capitulation, climax, breakout"
+        -> {{"left": "rvol_50", "op": ">", "right": <multiple the trader states, e.g. 3>}}
+        (rvol_<n> = volume / N-bar average volume, computable on plain daily bars.
+         If the trader gives no multiple, leave it as a tape_feature todo instead.)
 
 ORDER-FLOW / LEVEL-2 / TAPE rules — populate `tape_features`:
 Bar data cannot see the order book, so any rule about Level 2 depth, time & sales,

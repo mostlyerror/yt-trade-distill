@@ -49,6 +49,7 @@ volatility: atr_<n>, bb_upper, bb_lower, bb_basis
 momentum:   macd_line, macd_signal, macd_hist
 stochastic: stoch_k, stoch_d
 volume-px:  vwap
+rel-volume: rvol_<n>   (current volume / N-bar avg volume; e.g. rvol_50 — spike/capitulation)
 structure:  swing_high_<n>, swing_low_<n>   (e.g. swing_high_5, swing_low_5)
 numbers:    any literal number (30, 1.5, 0.02)
 """.strip()

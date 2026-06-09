@@ -14,6 +14,7 @@ from .generate_tape_spec import write_tape_artifacts
 from .ingest import _slug, ingest
 from .llm import get_llm
 from .report import generate_report
+from .split import swing_readme, swing_subset
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,6 +64,18 @@ def main(argv: list[str] | None = None) -> int:
     open(report_path, "w", encoding="utf-8").write(generate_report(spec))
     wrote_tape = write_tape_artifacts(spec, out_dir)
 
+    # Free-data swing-only variant: the daily-chart system with the intraday/L2
+    # overlay stripped out, so it runs on free OHLCV.
+    swing = swing_subset(spec)
+    swing_dir = os.path.join(out_dir, "swing")
+    os.makedirs(swing_dir, exist_ok=True)
+    json.dump(swing, open(os.path.join(swing_dir, "strategy.json"), "w", encoding="utf-8"),
+              ensure_ascii=False, indent=2)
+    open(os.path.join(swing_dir, "strategy.pine"), "w", encoding="utf-8").write(generate_pine(swing))
+    open(os.path.join(swing_dir, "backtest.py"), "w", encoding="utf-8").write(generate_backtest(swing))
+    open(os.path.join(swing_dir, "report.md"), "w", encoding="utf-8").write(generate_report(swing))
+    open(os.path.join(swing_dir, "README.md"), "w", encoding="utf-8").write(swing_readme(swing))
+
     print("\n✓ Done. Outputs:")
     print(f"  • {spec_path}      — structured strategy (the distillation)")
     print(f"  • {report_path}        — human-readable summary with source quotes")
@@ -71,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     if wrote_tape:
         print(f"  • {os.path.join(out_dir, 'tape_features.json')}  — Level-2/order-flow target spec")
         print(f"  • {os.path.join(out_dir, 'tape_engine_stub.py')} — data-agnostic real-time engine scaffold")
+    print(f"  • {swing_dir}/  — FREE-DATA swing-only variant (strategy.pine, backtest.py, README)")
     return 0
 
 

@@ -133,6 +133,27 @@ def generate_report(spec: dict) -> str:
                 L.append(f"  {ev}")
         L.append("")
 
+    if spec.get("free_data_features"):
+        L.append("## Free-data features (daily bars, no L2 needed)")
+        L.append("*Order-flow-flavored rules that are still computable on free daily OHLCV "
+                 "(`trades` fidelity). `TODO` params are thresholds you set.*")
+        for f in spec["free_data_features"]:
+            L.append(f"- **{f.get('primitive', '?')}** [{f.get('gates', '?')}/{f.get('direction', 'na')}]")
+            if f.get("description"):
+                L.append(f"  - {f['description']}")
+            for k, v in (f.get("params") or {}).items():
+                if isinstance(v, dict) and v.get("value") is None:
+                    L.append(f"  - `{k}` = **TODO** — {v.get('todo', '')}")
+        L.append("")
+
+    if spec.get("excluded_intraday_features"):
+        L.append("## Excluded: intraday / Level-2 overlay (needs paid data)")
+        L.append("*Removed from this free-data swing variant — they need realtime trades+quotes / MBP-10 / MBO.*")
+        for f in spec["excluded_intraday_features"]:
+            L.append(f"- `{f.get('data_requirement', '?')}` · **{f.get('primitive', '?')}** "
+                     f"— {(f.get('description') or '')[:100]}")
+        L.append("")
+
     if spec.get("discretionary_notes"):
         L.append("## ⚠️ Discretionary (not mechanizable)")
         L.append("*The trader relies on these, but they can't be coded from what was said:*")

@@ -80,12 +80,20 @@ def generate_backtest(spec: dict) -> str:
     tp = tps[0] if tps else {}
     tp_kind = (tp.get("type") or "").lower()
 
+    trail_long_expr, trail_short_expr = "None", "None"  # set for structure-trailing stops
     if sl_kind == "atr":
         length = int((sl.get("params") or {}).get("atr_length", 14))
         atr_ref = t.operand(f"atr_{length}")
         sldist_expr = f"{_num(sl.get('value'), 1.5)} * {atr_ref}"
     elif sl_kind == "fixed_pct":
         sldist_expr = f"df['Close'] * {_num(sl.get('value'), 1.0) / 100.0}"
+    elif sl_kind == "structure":
+        # Trail the stop at the swing low/high — ratchets with the trend.
+        n = int((sl.get("params") or {}).get("swing_length", 5))
+        lo_ref = t.operand(f"swing_low_{n}")
+        hi_ref = t.operand(f"swing_high_{n}")
+        sldist_expr = f"(df['Close'] - {lo_ref})"
+        trail_long_expr, trail_short_expr = lo_ref, hi_ref
     else:
         sldist_expr = "df['Close'] * 0.02  # no mechanical stop found; default 2%"
 
@@ -108,8 +116,9 @@ def generate_backtest(spec: dict) -> str:
     return f'''\
 """Backtest auto-distilled from the "{channel}" YouTube channel.
 
-Usage:  python backtest.py path/to/ohlcv.csv
-CSV must have columns: Date, Open, High, Low, Close, Volume
+Usage:  python backtest.py <TICKER | path/to/ohlcv.csv> [period]
+  python backtest.py AAPL 2y     # pulls FREE daily bars via yfinance
+  python backtest.py data.csv    # or a CSV with columns Date,Open,High,Low,Close,Volume
 """
 {_HELPERS}
 
@@ -119,8 +128,16 @@ COMMISSION     = 0.0005    # 5 bps per side
 
 
 def load(path):
-    df = pd.read_csv(path)
-    df.columns = [c.capitalize() for c in df.columns]
+    if path.lower().endswith(".csv"):
+        df = pd.read_csv(path)
+    else:
+        import yfinance as yf  # free daily data; pip install yfinance
+        period = sys.argv[2] if len(sys.argv) > 2 else "2y"
+        df = yf.download(path, period=period, interval="1d", auto_adjust=True, progress=False)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.reset_index()
+    df.columns = [str(c).capitalize() for c in df.columns]
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"])
         df = df.set_index("Date")
@@ -135,6 +152,8 @@ def run(df):
     longSignal  = ({long_sig}) & ({filt})
     shortSignal = ({short_sig}) & ({filt})
     exitSignal  = {exit_sig}
+    trailL = {trail_long_expr}   # structure-trailing stop level (or None)
+    trailS = {trail_short_expr}
 
     equity = START_EQUITY
     pos = 0          # +1 long, -1 short
@@ -146,6 +165,15 @@ def run(df):
         o, h, l, c = (df["Open"].iat[i], df["High"].iat[i],
                       df["Low"].iat[i], df["Close"].iat[i])
         if pos != 0:
+            # Ratchet a structure-trailing stop toward the latest swing level.
+            if pos > 0 and trailL is not None:
+                tl = trailL.iat[i]
+                if tl == tl:          # not NaN
+                    stop = max(stop, tl)
+            elif pos < 0 and trailS is not None:
+                ts = trailS.iat[i]
+                if ts == ts:
+                    stop = min(stop, ts)
             exit_px = None
             if pos > 0:
                 if l <= stop: exit_px = stop
@@ -201,7 +229,7 @@ def _stats(trades, curve):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        sys.exit("usage: python backtest.py path/to/ohlcv.csv")
+        sys.exit("usage: python backtest.py <TICKER | ohlcv.csv> [period]")
     stats = run(load(sys.argv[1]))
     print(json.dumps(stats, indent=2))
 '''
