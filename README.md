@@ -50,7 +50,14 @@ Swap providers via env vars (no code changes for callers):
 ```
 YTD_LLM_PROVIDER=claude_cli   # default
 YTD_MODEL=sonnet              # or opus, haiku
+YTD_LLM_TIMEOUT=600           # seconds per claude call before it times out + retries
+YTD_LLM_RETRIES=2             # retries on a failed/empty call (transient under load)
+YTD_MAP_WORKERS=6             # parallel per-video extraction calls
 ```
+
+Long-running calls print an elapsed heartbeat, the parallel map shows a progress
+bar, and a failed call logs before it retries — so a slow `claude -p` (e.g. when
+other local `claude` sessions are competing for it) reads as *working*, not hung.
 
 Adding an Anthropic-API or Ollama provider = one new file in `llm/` + a branch in
 `llm/__init__.py:get_llm`.
