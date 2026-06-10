@@ -7,7 +7,7 @@ import os
 import sys
 
 from . import __version__
-from .distill import distill
+from .distill import finalize_spec, map_videos, reduce_extractions
 from .generate_backtest import generate_backtest
 from .generate_pine import generate_pine
 from .generate_tape_spec import write_tape_artifacts
@@ -45,16 +45,30 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = os.path.join(args.out, _slug(channel))
     os.makedirs(out_dir, exist_ok=True)
     spec_path = os.path.join(out_dir, "strategy.json")
+    extractions_path = os.path.join(out_dir, "extractions.json")
 
     if os.path.exists(spec_path) and not args.no_cache:
         print(f"▶ Reusing cached spec {spec_path} (pass --no-cache to rebuild)")
         spec = json.load(open(spec_path, encoding="utf-8"))
     else:
-        print("▶ Distilling (map per-video, then merge)…")
-        spec, extractions = distill(channel, videos, llm)
+        # Phase 1 — map (cached). Persisted BEFORE reduce so a reduce failure
+        # never throws away the expensive per-video extraction work.
+        if os.path.exists(extractions_path) and not args.no_cache:
+            print(f"▶ Reusing cached extractions {extractions_path}")
+            extractions = json.load(open(extractions_path, encoding="utf-8"))
+        else:
+            print("▶ Map: per-video extraction…")
+            extractions = map_videos(videos, llm)
+            json.dump(extractions, open(extractions_path, "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=2)
+        if not extractions:
+            print("✗ No usable extractions. Nothing to distill.", file=sys.stderr)
+            return 1
+        # Phase 2 — reduce (resumes from cached extractions if it failed before).
+        print("▶ Reduce: merging extractions into one spec…")
+        spec = reduce_extractions(channel, extractions, llm)
+        spec = finalize_spec(spec, channel, extractions)
         json.dump(spec, open(spec_path, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-        json.dump(extractions, open(os.path.join(out_dir, "extractions.json"), "w", encoding="utf-8"),
-                  ensure_ascii=False, indent=2)
 
     pine_path = os.path.join(out_dir, "strategy.pine")
     bt_path = os.path.join(out_dir, "backtest.py")

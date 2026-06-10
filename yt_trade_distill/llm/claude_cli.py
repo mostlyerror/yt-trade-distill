@@ -70,9 +70,11 @@ class ClaudeCLI:
         # the map step is high-volume. Override per-run with --model if you want
         # opus for the harder reduce/merge pass.
         self.model = model
-        # 600s/attempt is generous for one call yet fails a genuinely stuck call
-        # in minutes, not the quarter-hour the old 900s default cost. Tune via env.
-        self.timeout = timeout if timeout is not None else _env_int("YTD_LLM_TIMEOUT", 600)
+        # 900s/attempt: the reduce/merge step is a heavy generation that can
+        # legitimately run several minutes on long-form channels — a shorter fuse
+        # kills valid in-progress calls. Visibility comes from the heartbeat, not
+        # a tight timeout. Tune via env (e.g. lower it for fast map-only runs).
+        self.timeout = timeout if timeout is not None else _env_int("YTD_LLM_TIMEOUT", 900)
         # Concurrent `claude -p` calls (the parallel map) occasionally return a
         # transient non-zero exit; a couple of retries with backoff stops one bad
         # call from dropping an entire video's extraction.

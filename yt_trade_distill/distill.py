@@ -22,8 +22,14 @@ from .prompts import extract_prompt, reduce_prompt
 # Conservative char budgets. ~4 chars/token, so 48k chars ≈ 12k tokens of input,
 # leaving ample room in a 200k-context model for instructions + output.
 _CHUNK_CHARS = 48_000
-_REDUCE_BATCH = 12  # per-video extractions merged per reduce call
 _MAP_WORKERS = int(os.environ.get("YTD_MAP_WORKERS", "6"))
+# Reduce is batched by SIZE, not count: long-form videos (a 90-min stream) yield
+# big extractions, and merging too many at once makes one giant, slow `claude`
+# call that times out. Cap each reduce call's input to a budget; the hierarchical
+# reduce recurses until a single batch remains. ~30k chars ≈ a single map call's
+# size, which we know completes comfortably.
+_REDUCE_BATCH_CHARS = int(os.environ.get("YTD_REDUCE_BATCH_CHARS", "30000"))
+_REDUCE_BATCH_MAX = int(os.environ.get("YTD_REDUCE_BATCH_MAX", "6"))  # secondary cap, by count
 
 
 # Top-level keys that identify one of our objects (spec / partial / per-video
@@ -219,29 +225,63 @@ def _reduce_once(channel: str, partials: list[dict], llm: LLM, is_final: bool) -
     return extract_json(raw)
 
 
+def _batch_by_size(items: list[dict], max_chars: int, max_count: int) -> list[list[dict]]:
+    """Greedily pack items into batches under a char budget (and a count cap).
+
+    An item larger than the budget still gets its own batch — we never split an
+    extraction, just keep a too-big one alone.
+    """
+    batches: list[list[dict]] = []
+    cur: list[dict] = []
+    cur_chars = 0
+    for it in items:
+        sz = len(json.dumps(it, ensure_ascii=False))
+        if cur and (cur_chars + sz > max_chars or len(cur) >= max_count):
+            batches.append(cur)
+            cur, cur_chars = [], 0
+        cur.append(it)
+        cur_chars += sz
+    if cur:
+        batches.append(cur)
+    return batches
+
+
 def reduce_extractions(channel: str, extractions: list[dict], llm: LLM) -> dict:
-    """Hierarchical reduce: batch -> partial specs -> final spec."""
+    """Hierarchical reduce, batched by SIZE: merge small groups into partial specs,
+    then merge the partials, recursing until a single batch remains.
+
+    Size-batching (vs the old fixed count) keeps every `claude` call small enough
+    to finish well under the timeout, even when a few long-form videos produce
+    very large extractions.
+    """
     if not extractions:
         raise ValueError("Nothing to reduce — no usable extractions.")
-    if len(extractions) <= _REDUCE_BATCH:
-        return _reduce_once(channel, extractions, llm, is_final=True)
 
-    partials: list[dict] = []
-    batches = [extractions[i : i + _REDUCE_BATCH] for i in range(0, len(extractions), _REDUCE_BATCH)]
-    for i, batch in enumerate(batches, 1):
-        print(f"  [reduce L1 {i}/{len(batches)}]")
-        partials.append(_reduce_once(channel, batch, llm, is_final=False))
-    print(f"  [reduce L2 final] merging {len(partials)} partials")
-    return _reduce_once(channel, partials, llm, is_final=True)
+    current = extractions
+    level = 0
+    while True:
+        batches = _batch_by_size(current, _REDUCE_BATCH_CHARS, _REDUCE_BATCH_MAX)
+        # Progress guard: if nothing consolidated (every item already over budget),
+        # force pairs so the count strictly halves each level and we can't loop.
+        if len(batches) >= len(current) > 1:
+            batches = [current[i : i + 2] for i in range(0, len(current), 2)]
+        if len(batches) == 1:
+            print(f"  [reduce final] merging {len(batches[0])} item(s)")
+            return _reduce_once(channel, batches[0], llm, is_final=True)
+        level += 1
+        partials: list[dict] = []
+        for i, batch in enumerate(batches, 1):
+            print(f"  [reduce L{level} {i}/{len(batches)}] ({len(batch)} items)")
+            partials.append(_reduce_once(channel, batch, llm, is_final=False))
+        current = partials
 
 
-def distill(channel: str, videos: list[Video], llm: LLM) -> tuple[dict, list[dict]]:
-    """Run the full map/reduce. Returns (canonical_spec, per_video_extractions)."""
-    extractions = map_videos(videos, llm)
-    spec = reduce_extractions(channel, extractions, llm)
+def finalize_spec(spec: dict, channel: str, extractions: list[dict]) -> dict:
+    """Attach the provenance layer + meta to a reduced spec (the map/reduce tail).
 
-    # Provenance layer: a deterministic video roster the report joins rule
-    # `sources` against, plus a content-type breakdown of what was analyzed.
+    Split out from distill() so the CLI can run map and reduce as separately
+    cached phases and still produce an identical final spec.
+    """
     video_index = build_video_index(extractions)
     spec["video_index"] = video_index
     breakdown: dict[str, int] = {}
@@ -253,4 +293,11 @@ def distill(channel: str, videos: list[Video], llm: LLM) -> tuple[dict, list[dic
     spec["meta"]["channel"] = channel
     spec["meta"]["videos_analyzed"] = len(extractions)
     spec["meta"]["content_type_breakdown"] = breakdown
-    return spec, extractions
+    return spec
+
+
+def distill(channel: str, videos: list[Video], llm: LLM) -> tuple[dict, list[dict]]:
+    """Run the full map/reduce. Returns (canonical_spec, per_video_extractions)."""
+    extractions = map_videos(videos, llm)
+    spec = reduce_extractions(channel, extractions, llm)
+    return finalize_spec(spec, channel, extractions), extractions
