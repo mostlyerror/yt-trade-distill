@@ -92,9 +92,15 @@ class ClaudeCLI:
         # the user's MCP servers (calendar, figma, playwright, …) on every call.
         # Without this, each invocation pays minutes of server-startup overhead —
         # crippling for a map/reduce over a whole channel.
+        # `--tools ""` disables ALL built-in tools. `claude -p` is the full agentic
+        # CLI: left with tools, it sometimes "helpfully" writes the spec to a file
+        # (e.g. _merged_spec.json) and prints a prose summary instead of the JSON
+        # we parse from stdout — which silently breaks the reduce. No tools means
+        # it can only answer in text, so stdout is always the JSON we asked for.
         cmd = [
             "claude", "-p", "--model", self.model,
             "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+            "--tools", "",
         ]
         last_err = ""
         for attempt in range(self.retries + 1):
